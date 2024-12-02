@@ -1,9 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta, tzinfo
 import time
+import pytz
+
 import pandas as pd
+import ssdeep
 
 from colors import Colors as cf
-from constants import BINANCE_COL_NAMES, TF_TICKS
+from constants import BINANCE_COL_NAMES, TF_TICKS, DT_FMT
 
 
 def tf_transform(new_tf: int | str, filename, ticks_base):
@@ -71,6 +74,9 @@ def tf_transform(new_tf: int | str, filename, ticks_base):
             errors += 1
             pos += 1
 
+        except Exception as e:
+            errors += 1
+
     print('\n========== complete ==========')
     print(f'{cf.fail}{errors}{cf.endc} ERRORS. '
           f'{cf.warn}{int(n_periods - complete - errors)}{cf.endc} MISSING.')
@@ -80,14 +86,13 @@ def candle_expand_info(row):
     row = row.squeeze()
     v_t_s_b = row.v_b - row.v_t_b_b
     v_t_s_q = row.v_q - row.v_t_b_q
-    way = int(row.o - row.c < 0)
+    way = int((row.o - row.c) < 0)
     change = row.c / row.o - 1 if way else (1 - row.c / row.o)
     pct_high = row.h / row.c - 1 if way else row.h / row.o - 1
     pct_low = 1 - row.l / row.o if way else 1 - row.l / row.c
-    print(row.ts)
 
     extras = {
-        'date': datetime.fromtimestamp(row.ts).strftime('%d-%m-%Y %H:%M:%S'),
+        'date': ts_to_datetime(row.ts),
         'v_t_s_b': v_t_s_b,
         'v_t_s_q': v_t_s_q,
         'v_m_b_b': v_t_s_b,
@@ -98,53 +103,59 @@ def candle_expand_info(row):
         'buy_pct': round(row.v_t_b_b / row.v_b * 100, 4),
         'way': way,
         'body': abs(row.o - row.c),
-        'pct_change': round(change * 100, 4),
+        'pct_shift': round(change * 100, 4),
         'center': (row.c + row.o) / 2,
         'pct_trade_vol': round(row.v_b / row.nt / row.v_b * 100, 10),
         'pct_h': round(pct_high * 100, 4),
         'pct_l': round(pct_low * 100, 4),
-        'body_l_h': row.h - row.l,
-        'pct_body_l_h': round(((row.h - row.l) / abs(row.o - row.c)) * 100, 4)
+        'l_h': row.h - row.l,
+        'body_l_h': round(((row.h - row.l) / abs(row.o - row.c) - 1), 4)
     }
     return pd.Series(extras)
 
 
 def ts_to_datetime(ts):
-    return datetime.fromtimestamp(ts).strftime('%d-%m-%Y %H:%M:%S')
+    return datetime.fromtimestamp(ts, timezone.utc).strftime(DT_FMT)
 
 
 def datetime_to_ts(dt):
-    return int(time.mktime(datetime.strptime(dt, '%d-%m-%Y %H:%M:%S').timetuple()))
+    return int(time.mktime(datetime.strptime(dt, DT_FMT).timetuple())
+            - time.timezone)
 
 
-def find_row(df, ts):
-    return df.index[df.ts == ts].tolist()[0]
-
-
-def period_info(df, start, end, f):
-    df.reset_index(inplace=True)
+def find_row_i(df, p, f):
     if f == 'dt':
-        start = find_row(df, datetime_to_ts(start))
-        end = find_row(df, datetime_to_ts(end))
+        return df.index[df.ts == datetime_to_ts(p)].tolist()[0]
     if f == 'ts':
-        start = find_row(df, start)
-        end = find_row(df, end)
+        return df.index[df.ts == p].tolist()[0]
+
+
+def df_to_str(df):
+    return ' '.join([' '.join(df.iloc[[i]].squeeze().astype(str))
+              for i in range(0, len(df))])
+
+
+def df_info(df):
+    df.reset_index(drop=True, inplace=True)
 
     s = 0
-    for i in range(start, end + 1):
+    for i in range(0, len(df)):
         row = df.iloc[[i]].squeeze()
         pct_change = (row.c / row.o - 1 if (row.o - row.c) < 0
             else (1 - row.c / row.o)) * 100
         s += pct_change
-    avg_volatility = round(s / (end - start + 1), 4)
+    avg_volatility = round(s / len(df), 4)
+
+    s = df_to_str(df)
 
     info = {
         'avg_volat': avg_volatility,
+        'num_candles': int(len(df)),
+        'hash': hash_candles(s)
     }
     return pd.Series(info)
 
 
-def hash_candles_chain():
-    pass
-
+def hash_candles(s):
+    return ssdeep.hash(s)
 

@@ -10,7 +10,7 @@ __pycache__/
 # specific
 experimental.py
 hist/
-*_*_[0-9]*
+*_*_*
 
 # C extensions
 *.so
