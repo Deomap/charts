@@ -8,9 +8,9 @@ __pycache__/
 .idea/
 
 # specific
-experimental.py
 hist/
 *_*_*
+chaos.py
 
 # C extensions
 *.so
